@@ -16,6 +16,9 @@ class Disk():
     def start(self, i):
         return '-s %s,%s,%s ' % (i, self.driver, self.path)
 
+    def stop(self):
+        return True
+
     def __repr__(self):
         return '<virtual %s disk attached to %s>' % (self.driver, self.path)
 

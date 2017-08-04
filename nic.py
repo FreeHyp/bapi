@@ -1,4 +1,5 @@
 from custom_t import NIC_TYPES
+from utils import shell
 
 class Nic():
     def __init__(self, bridge, driver, mac='auto'):
@@ -20,11 +21,24 @@ class Nic():
         else:
             mac_str = ""
 
-        self.tap = 'tap10'
-        print "ifconfig tap create"
-        print "ifconfig %s addm %s" % (self.bridge, self.tap)
-        return '-s %s,%s,%s%s ' % (i, self.driver, self.tap, mac_str)
+        try:
+            self.tap = shell("ifconfig tap create | tr -d '\n'")
+            shell('ifconfig %s addm %s' % (self.bridge, self.tap))
+            return '-s %s,%s,%s%s ' % (i, self.driver, self.tap, mac_str)
+        except:
+            raise
+
+    def stop(self):
+        try:
+            shell('ifconfig %s deletem %s' % (self.bridge, self.tap))
+            shell('ifconfig %s destroy' % self.tap)
+            self.tap = None
+        except:
+            raise
 
     def __repr__(self):
-        return '<virtual %s nic attached to %s mac: %s>' % (self.driver, self.bridge, self.mac)
+        conndisc = 'Disconnected'
+        if self.tap is not None:
+            conndisc = 'Connected'
+        return '<virtual %s nic attached to %s mac: %s, %s>' % (self.driver, self.bridge, self.mac, conndisc)
 
