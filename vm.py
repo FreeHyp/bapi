@@ -1,15 +1,16 @@
+from config import *
 from disk import Disk
 from nic import Nic
 from os.path import isfile
 from time import sleep
-from utils import shell
+from utils import log, shell
 import subprocess
-import yaml
+import json 
+import os
 
-CONF_PATH='/tmp'
 
 class VM:
-    def __init__(self, vm_name):
+    def __init__(self, something):
         self.auto_start = False
         self.bootrom = '/usr/local/share/uefi-firmware/BHYVE_UEFI.fd'
         self.com1 = 'stdio'
@@ -17,22 +18,45 @@ class VM:
         self.disk = []
         self.fbuf_ip = None
         self.fbuf_port = None
+        self.fbuf_wait = False 
         self.iso = None 
         self.memory = 1024 
         self.name = ''
         self.ncpus = 1
         self.network = []
 
-        if isfile('%s/%s' % (CONF_PATH, vm_name)):
-            self.load_from_file('%s/%s' % (CONF_PATH, vm_name))
+        if isfile('%s/%s' % (VM_DIR, something)):
+            self.load_from_file('%s/%s' % (VM_DIR, something))
         elif isinstance(something, dict):
             self.load_from_dict(something)
         else:
-            raise
+            raise OSError("VM %s does not exist" % something)
+
+        self.associate_taps()
+
+    def is_tap_bridge_member(self, tap, bridge):
+        cmd = "ifconfig %s | grep ': %s '" % (bridge, tap)
+        output = shell(cmd)
+        if output != None and output.count('\n') == 1:
+            return True
+        else:
+            return False
+
+    def get_taps_in_use(self):
+        cmd = "ifconfig | grep -B 7 'Opened by PID %s' | grep 'tap[0-9]*:' | cut -d \: -f1" % self.get_pid()
+        taps = shell(cmd).splitlines()
+        return taps
+
+    def associate_taps(self):
+        taps = self.get_taps_in_use()
+        for interface in self.network:
+            for tap in taps:
+                if self.is_tap_bridge_member(tap, interface.bridge):
+                    interface.tap = tap
 
     def load_from_file(self, fpath):
         with open(fpath) as f:
-            fconf = yaml.load(f.read())
+            fconf = json.loads(f.read())
         self.load_from_dict(fconf)
 
     def load_from_dict(self, d):
@@ -69,10 +93,10 @@ class VM:
                 rtrn[key] = getattr(self, key)
         return rtrn
 
-    def dump_to_file(self, fpath):
+    def save(self):
         d = self.dump_to_dict()
-        with open(fpath, 'w') as f:
-            f.write(yaml.dump(d))
+        with open('%s/%s' %(VM_DIR, self.name), 'w') as f:
+            f.write(json.dumps(d))
         return True
 
     def __repr__(self):
@@ -106,13 +130,17 @@ class VM:
             i = i + 1
 
         if self.fbuf_ip != None and self.fbuf_port != None:
-            pcistr += ' -s %s,fbuf,tcp=%s:%s ' % (i, self.fbuf_ip, self.fbuf_port)
+            if self.fbuf_wait == True:
+                fbw = ',wait'
+            else:
+                fbw = ''
+            pcistr += ' -s %s,fbuf,tcp=%s:%s%s' % (i, self.fbuf_ip, self.fbuf_port, fbw)
             i = i + 1
 
         # PCI Bridge devices
-        if self.com1 is not None: 
+        if self.com1 is not 'None':
             lpcistr += '-l %s,%s ' % ('com1', self.com1)
-        if self.com2 is not None: 
+        if self.com2 is not 'None': 
             lpcistr += '-l %s,%s ' % ('com2', self.com2)
 
         if self.bootrom is not None:
@@ -142,10 +170,15 @@ class VM:
         return False
 
     def stop(self):
+        TIMEOUT = 120
         shell('kill %s' % self.get_pid())
-        if not self.block_until_poweroff(120):
+        log('info', 'Signaling vm %s to shut down' % self.name)
+        if not self.block_until_poweroff(TIMEOUT):
             shell('kill -9 %s' % self.get_pid())
-        shell('bhyvectl destroy --vm=%s' % self.name)
+            log('info', 'Timeout (%s seconds) reached, killing vm %s' % (TIMEOUT, self.name))
+        else:
+            log('info', 'VM %s turned off gracefully' % self.name)
+        shell('bhyvectl --vm=%s --destroy' % self.name)
         sleep(2) # Give process a chance to die
         if self.get_pid() != 0:
             raise OSError("VM did not die when it was supposed to")
@@ -164,3 +197,9 @@ class VM:
         if self.status() == 'Running':
             self.stop()
         self.start()
+
+    def delete(self):
+        if self.status() == 'Running':
+            self.stop()
+        os.remove('%s/%s' % (VM_DIR, self.name))
+

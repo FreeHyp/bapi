@@ -32,7 +32,6 @@ class Nic():
         try:
             shell('ifconfig %s deletem %s' % (self.bridge, self.tap))
             shell('ifconfig %s destroy' % self.tap)
-            self.tap = None
         except:
             raise
 
