@@ -29,7 +29,7 @@ def vms_ep():
     if request.method == 'POST':
         myvm = VM(request.json)
         myvm.save()
-        return 'yess'
+        return jsonify({"status": myvm.status()}), 200 
     elif request.method == 'GET':
         return jsonify(
                 {'vms': listdir(VM_DIR)}
